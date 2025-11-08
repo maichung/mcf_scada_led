@@ -5,7 +5,7 @@ import schedule
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 from pymodbus.client.sync import ModbusTcpClient
-from pymodbc import connect
+from pyodbc import connect
 
 app = Flask(__name__)
 
