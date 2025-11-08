@@ -10,7 +10,7 @@ from pyodbc import connect
 app = Flask(__name__)
 
 # Connection string SQL Server (chỉnh sửa theo DB của bạn)
-SQL_CONN_STR = 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=172.16.100.34;DATABASE=BinhMinhDN;UID=sa;PWD=Binhminh@123;TrustServerCertificate=yes;'
+SQL_CONN_STR = 'DRIVER={ODBC Driver 17 for SQL Server};SERVER=172.16.100.34;DATABASE=BinhMinhDN;UID=sa;PWD=Binhminh@123;'
 
 # File config
 CONFIG_FILE = 'config.json'
