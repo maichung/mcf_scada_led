@@ -1,11 +1,12 @@
-# app.py - Truyền dữ liệu SCADA → Màn LED qua Modbus TCP
+# app.py - Truyền dữ liệu SCADA → Màn LED qua TCP (custom HEX packet)
 import json
 import threading
 import time
 import schedule
 from flask import Flask, render_template_string, request, redirect, url_for
-from pymodbus.client import ModbusTcpClient
 import pyodbc
+import socket
+import struct
 
 app = Flask(__name__)
 
@@ -32,7 +33,7 @@ def save_config(config):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
 
-# === THỰC THI QUERY SQL (TRẢ VỀ STRING HOẶC None) ===
+# === THỰC THI QUERY SQL (TRẢ VỀ STRING HOẶC '---') ===
 def execute_query(query_sql):
     try:
         conn = pyodbc.connect(SQL_CONN_STR)
@@ -42,49 +43,43 @@ def execute_query(query_sql):
         conn.close()
         if row and row[0] is not None:
             return str(row[0]).strip()
-        return None
+        return '---'  # Default nếu không có dữ liệu
     except Exception as e:
         print(f"[SQL ERROR] {e}")
-        return None
+        return '---'
 
-# === GỬI DỮ LIỆU ASCII QUA MODBUS TCP (Holding Registers) ===
+# === GỬI DỮ LIỆU QUA TCP (CUSTOM HEX PACKET) ===
 def send_to_led(ip, value_str, unit_id=1, start_reg=0, max_chars=20):
     """
-    Gửi chuỗi ASCII vào Holding Registers.
-    - Mỗi register = 2 ký tự (16-bit).
-    - max_chars: giới hạn độ dài chuỗi.
+    Gửi packet HEX: header (12 bytes) + length (1 byte) + payload (UTF-16BE).
+    - value_str pad spaces đến max_chars.
+    - Ignore unit_id/start_reg (cho compat với config cũ).
     """
-    if value_str is None:
-        value_str = ''
-    value_str = value_str[:max_chars]
-    # Pad với space để đủ độ dài
-    value_str = value_str.ljust(max_chars, ' ')
+    if value_str == '---':
+        value_str = ' ' * max_chars  # Gửi spaces nếu lỗi
+    value_str = value_str[:max_chars].ljust(max_chars, ' ')
+    
+    # Build payload: UTF-16BE (big-endian)
+    payload = b''.join(struct.pack('>H', ord(c)) for c in value_str)
+    length = len(payload)
+    if length > 255:
+        print(f"[ERROR] Độ dài payload quá lớn: {length}")
+        return False
+    
+    header = b'\x00\x01\x00\x00\x00\x1B\x01\x10\x00\x00\x00\x0A'
+    length_byte = struct.pack('B', length)
+    packet = header + length_byte + payload
     
     try:
-        client = ModbusTcpClient(ip, port=502, timeout=3)
-        if not client.connect():
-            print(f"[MODBUS] Không kết nối được tới {ip}")
-            return False
-
-        # Chuyển chuỗi → list các register (2 ký tự/register)
-        registers = []
-        for i in range(0, max_chars, 2):
-            chunk = value_str[i:i+2]
-            reg_value = (ord(chunk[0]) << 8) | (ord(chunk[1]) if len(chunk) > 1 else 0)
-            registers.append(reg_value)
-
-        # Ghi nhiều register
-        result = client.write_registers(start_reg, registers, unit=unit_id)
-        client.close()
-
-        if result.isError():
-            print(f"[MODBUS ERROR] {ip}: {result}")
-            return False
-        else:
-            print(f"→ Gửi '{value_str.strip()}' đến {ip}")
-            return True
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        sock.connect((ip, 502))
+        sock.sendall(packet)
+        sock.close()
+        print(f"→ Gửi '{value_str.strip()}' đến {ip} (HEX: {packet.hex().upper()})")
+        return True
     except Exception as e:
-        print(f"[MODBUS EXCEPTION] {ip}: {e}")
+        print(f"[SOCKET ERROR] {ip}: {e}")
         return False
 
 # === GIÁM SÁT MỖI MÀN HÌNH (BACKGROUND) ===
